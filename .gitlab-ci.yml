@@ -1,0 +1,64 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  DOCKER_FILE: Dockerfile
+
+image: python:3.9
+
+build_job:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - echo "[+] Build stage"
+    - docker build -t fastapi:0.1 . -f $DOCKER_FILE
+    - docker login --username $DOCKER_HUB_USERNAME --password $DOCKER_HUB_PASS
+    - docker tag fastapi:0.1 $DOCKER_HUB_USERNAME/fastapi:0.1
+    - echo "[+] => Start pushing the image to Docker Hub -------"
+    - docker push $DOCKER_HUB_USERNAME/fastapi:0.1
+    - echo "[+] Built successfully"
+
+test_job:
+  stage: test
+  script:
+    - echo "[+] Skipped testing stage [-]"
+
+deploy_job:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  before_script:
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    # Add SSH keys
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - echo "$SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519.pub
+    - chmod 644 ~/.ssh/id_ed25519.pub
+    # Start SSH agent
+    - eval $(ssh-agent -s)
+    - echo "$SSH_KEY_PASS" | ssh-add ~/.ssh/id_ed25519 2>/dev/null
+    # Disable host key checking
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    # Install required packages
+    - apk add --no-cache openssh-client
+  script:
+    - echo "[+] Deploy stage"
+    # Copy SSH key to server (more reliable method)
+    - ssh -o StrictHostKeyChecking=no "${SERVER_USERNAME}@${SERVER_IP}" "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+    - cat ~/.ssh/id_ed25519.pub | ssh $SERVER_USERNAME@$SERVER_IP "cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    # Deploy container
+    - ssh $SERVER_USERNAME@$SERVER_IP "
+        docker login --username $DOCKER_HUB_USERNAME --password $DOCKER_HUB_PASS &&
+        docker pull $DOCKER_HUB_USERNAME/fastapi:0.1 &&
+        docker stop fastapi_container || true &&
+        docker rm fastapi_container || true &&
+        docker run -d --name fastapi_container -p 4000:8000 $DOCKER_HUB_USERNAME/fastapi:0.1"
