@@ -14,7 +14,7 @@ class User(Base):
     is_deleted=Column(Boolean, default=False)
     is_verified=Column(Boolean, default=True)
     created_date=Column(DateTime)
-    profile=Column(String, default="sokpheng.com")
+    profile=Column(String, default="user.com")
     updated_date=Column(DateTime, default=None)
 
     # create a constructor
